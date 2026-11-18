@@ -7,6 +7,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { confirmBankMatch, ignoreBankLine } from "../../actions";
 import { StateForm } from "@/components/forms/StateForm";
 import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
+import { requireCapability } from "@/server/auth/capabilities";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -23,6 +24,9 @@ export default async function ReconcilePage({
   params: Promise<{ id: string }>;
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("payments", "view");
   const { id } = await params;
   const sp = await searchParams;
   const { ctx } = await requireOrgContext();

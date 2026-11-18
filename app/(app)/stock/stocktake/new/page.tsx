@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { listSitesForOrg, type SiteRow, type SitesClient } from "@/server/services/sites";
 import { siteKindLabel } from "@/lib/sites/schema";
 import { OpenStocktakeForm } from "./_open-form";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,10 @@ export const metadata = { title: "New stocktake · CrewFlow" };
  * expected quantity of every item at that site into the count sheet.
  */
 export default async function NewStocktakePage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["stock", "view"], ["stock_field", "view"]]);
+  await requireCapability("stock", "create");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 

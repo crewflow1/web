@@ -13,6 +13,7 @@ import {
 } from "@/lib/sales/model";
 import { CompanyCard, EmptyState } from "../_components";
 import { inputCls, selectCls } from "../_styles";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — Company Intelligence search (CEO Directive 003, Phase 1).
@@ -62,6 +63,9 @@ export default async function CompaniesSearchPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const sources = await listSalesSources(true);
 

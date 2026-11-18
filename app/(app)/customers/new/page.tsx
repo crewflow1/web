@@ -7,6 +7,7 @@ import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 import type { CustomerFormInput } from "@/lib/customers/schema";
 import { createCustomer } from "../actions";
 import { CustomerForm } from "../_form";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Create-customer page.
@@ -23,6 +24,9 @@ export default async function NewCustomerPage({
 }: {
   searchParams: Promise<{ import?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("customers", "view");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const parentOptions = await loadBusinessOptions(supabase, ctx.org.id);

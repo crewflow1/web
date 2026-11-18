@@ -12,6 +12,7 @@ import {
 import { formatQty } from "@/lib/purchase-orders/receiving";
 import { poStatusLabel } from "@/lib/purchase-orders/schema";
 import { EmptyState } from "../../_components/empty-state";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,10 @@ export const metadata = { title: "Bill matching · CrewFlow" };
  */
 
 export default async function PurchaseOrderMatchingPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["purchase_orders", "view"], ["goods_receiving_field", "view"]]);
+  await requireCapability("purchase_orders", "view");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 

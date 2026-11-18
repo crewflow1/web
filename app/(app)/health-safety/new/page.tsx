@@ -5,6 +5,7 @@ import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 import { listAssessors, listLinkableJobs } from "../_data";
 import { createRiskAssessment, generateRamsDraft } from "../actions";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 /**
  * /health-safety/new — draft a new RAMS header.
@@ -34,6 +35,9 @@ export default async function NewRiskAssessmentPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["site_safety", "view"], ["site_safety_field", "view"]]);
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const assessors = await listAssessors(ctx.org.id);

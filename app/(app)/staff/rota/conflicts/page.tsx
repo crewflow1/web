@@ -17,6 +17,7 @@ import {
   type ScheduleRecommendation,
 } from "@/lib/schedule/recommendations";
 import type { BriefingSeverity } from "@/lib/briefing/types";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Schedule check — the conflict detector, and what to do about each finding.
@@ -217,6 +218,9 @@ function RecommendationPanel({ rec }: { rec: ScheduleRecommendation }) {
 }
 
 export default async function ScheduleConflictsPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("rota", "edit");
   const { ctx } = await requireOrgContext();
   const report = await buildScheduleIntegrity(ctx.org.id);
   const { conflicts, total, summary, window, recommendations, recommendationSummary } = report;

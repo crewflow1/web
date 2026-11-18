@@ -1,3 +1,5 @@
+import { isRedirectError } from "next/dist/client/components/redirect-error";
+import { getURLFromRedirectError } from "next/dist/client/components/redirect";
 import * as respond from "@/lib/api/respond";
 import { requireCapabilityApi } from "@/server/auth/capabilities";
 import {
@@ -38,6 +40,15 @@ export async function GET() {
       top_customers,
     });
   } catch (e) {
+    // The org guard signals "signed out" / "no usable workspace" by throwing
+    // Next's redirect control-flow error. Inside this catch-all it used to
+    // surface as a 500 for every such caller; an API answers with the status.
+    if (isRedirectError(e)) {
+      const to = getURLFromRedirectError(e);
+      return to.startsWith("/login")
+        ? respond.error(401, "unauthenticated")
+        : respond.error(403, "forbidden");
+    }
     console.error("[reports] unhandled", e);
     return respond.error(500, "Reports temporarily unavailable");
   }

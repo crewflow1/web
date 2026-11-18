@@ -27,6 +27,8 @@ import {
   createSubscriptionCheckout,
 } from "./_stripe-actions";
 import { InternalNotesPanel } from "./_internal-notes-panel";
+import { requireHqPage } from "@/server/auth/hq";
+import { StateForm } from "@/components/forms/StateForm";
 
 /**
  * Customers OS — per-customer detail page (HQ-3).
@@ -58,6 +60,9 @@ export default async function HqCustomerDetailPage({
   params: Params;
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const { id } = await params;
   const sp = await searchParams;
   const snap = await loadCustomerSnapshot(id);
@@ -424,14 +429,15 @@ export default async function HqCustomerDetailPage({
             Stripe checkout
           </h2>
           <div className="flex flex-wrap items-center gap-3">
-            <a
-              href="/api/admin/stripe/provision"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
-            >
-              Provision Stripe products →
-            </a>
+            {/* POST only: provisioning creates Stripe objects, so it is never a link (GET). */}
+            <form method="post" action="/api/admin/stripe/provision" target="_blank">
+              <button
+                type="submit"
+                className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+              >
+                Provision Stripe products →
+              </button>
+            </form>
             <a
               href="/api/admin/stripe/verify"
               target="_blank"
@@ -451,7 +457,7 @@ export default async function HqCustomerDetailPage({
           confirms payment.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <form action={createSetupCheckout}>
+          <StateForm action={createSetupCheckout}>
             <input type="hidden" name="org_id" value={org.id} />
             <button
               type="submit"
@@ -459,8 +465,8 @@ export default async function HqCustomerDetailPage({
             >
               Open setup-fee checkout (£1,000)
             </button>
-          </form>
-          <form action={createSubscriptionCheckout}>
+          </StateForm>
+          <StateForm action={createSubscriptionCheckout}>
             <input type="hidden" name="org_id" value={org.id} />
             <button
               type="submit"
@@ -468,7 +474,7 @@ export default async function HqCustomerDetailPage({
             >
               Open subscription checkout (£500/mo)
             </button>
-          </form>
+          </StateForm>
         </div>
       </section>
 

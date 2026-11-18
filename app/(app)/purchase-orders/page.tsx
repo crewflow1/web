@@ -6,6 +6,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session"; import { requireCapability } from "@/server/auth/capabilities";
 import { poStatusLabel } from "@/lib/purchase-orders/schema";
 import { countPostedReceipts } from "./_receiving-data";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
 
@@ -39,6 +40,9 @@ export default async function PurchaseOrdersPage({
 }: {
   searchParams: Promise<{ saved?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["purchase_orders", "view"], ["goods_receiving_field", "view"]]);
   const { saved } = await searchParams;
   const { ctx } = await requireOrgContext(); await requireCapability("purchase_orders", "view");
   const supabase = await createClient();

@@ -6,6 +6,7 @@ import { formatGbp } from "@/lib/money";
 import { formatQuantity } from "@/lib/stock/movements";
 import { EmptyState } from "../../_components/empty-state";
 import { Card, CardHeader, Tile } from "../_components/ui";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,10 @@ export const metadata = { title: "Stock valuation · CrewFlow" };
  * double-count. See docs/operational-stock.md.
  */
 export default async function StockValuationPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["stock", "view"], ["stock_field", "view"]]);
+  await requireCapability("stock", "view");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 

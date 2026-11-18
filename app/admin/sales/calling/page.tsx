@@ -38,6 +38,7 @@ import type {
 } from "@/lib/sales/model";
 import { Chip, EmptyState, Pill, Section, Tile } from "../_components";
 import { callStatusPill, inputCls, tonerPill } from "../_styles";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — AI Calling Centre (CEO Directive 004, Phase 6).
@@ -68,6 +69,9 @@ function integrationPill(status: string): string {
 }
 
 export default async function CallingPage({ searchParams }: { searchParams: SP }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const query = sp.q?.trim() ?? "";
 

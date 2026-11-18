@@ -29,6 +29,7 @@ import {
   reopenAlert,
 } from "./actions";
 import { ClientConfirmForm } from "../_client-confirm";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Alerts + AI COO — HQ-5.
@@ -68,6 +69,9 @@ export default async function HqAlertsPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();
   const severity = (sp.severity ?? "all") as AlertSeverity | "all";

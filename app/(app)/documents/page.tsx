@@ -8,6 +8,7 @@ import {
   JOB_DOCUMENT_SEARCH_COLUMNS,
 } from "@/lib/search/filters";
 import { EmptyState } from "../_components/empty-state";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /documents — the org-wide document home.
@@ -112,6 +113,9 @@ const JOB_IN_CHUNK = 500;
 type SP = Promise<{ q?: string; source?: string }>;
 
 export default async function DocumentsPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("documents", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();

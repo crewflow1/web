@@ -70,6 +70,7 @@ import { resolveServedCapabilityView } from "@/server/sdk/registry-parity";
 import { MemoryCard, buildTypeMap } from "../../memory/_components";
 import { PageHeader, Badge, StatTile, buttonClass, type Tone } from "@/components/ui";
 import type { AiEmployeeTask } from "@/lib/ai-employees/model";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * AI Boardroom — employee detail (CEO Directive 001, Phase 1).
@@ -98,6 +99,9 @@ export default async function AiEmployeeDetailPage({
   params: Params;
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const { slug } = await params;
   const sp = await searchParams;
   const detail = await loadAiEmployeeBySlug(slug);

@@ -9,6 +9,7 @@ import { STATUS_LABEL, STATUS_PILL } from "../_styles";
 import { BackToQualification } from "../_components";
 import { LiveRun } from "./_live";
 import { QualificationReport } from "./_report";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Lead Qualification AI — single run view (CEO Directive 003, Module 3).
@@ -28,6 +29,9 @@ export default async function QualificationRunPage({
 }: {
   params: Promise<{ taskId: string }>;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const { taskId } = await params;
   const state = await getQualificationRunState(taskId);
   if (!state) notFound();

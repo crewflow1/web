@@ -22,6 +22,7 @@ import {
   dismissHq,
   requeueFailedEmail,
 } from "./actions";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * HQ Notifications centre — /admin/notifications (HQ-8).
@@ -50,6 +51,9 @@ export default async function HqNotificationsPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();
   const category =

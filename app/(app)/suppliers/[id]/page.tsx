@@ -20,6 +20,7 @@ import {
   BILL_SETTLEMENT_STATUS_CLASS,
   BILL_SETTLEMENT_STATUS_LABEL,
 } from "@/lib/suppliers/payments";
+import { requireCapability } from "@/server/auth/capabilities";
 
 type SupplierRow = {
   id: string;
@@ -56,6 +57,9 @@ export default async function SupplierDetailPage({
   params: Promise<{ id: string }>;
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("suppliers", "view");
   const { id } = await params;
   const sp = await searchParams;
   const { ctx } = await requireOrgContext();

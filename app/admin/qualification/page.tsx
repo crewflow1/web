@@ -22,6 +22,7 @@ import {
 } from "./_launcher";
 import { Tile, DecisionBadge } from "./_components";
 import { STATUS_LABEL, STATUS_PILL, scoreTone } from "./_styles";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Lead Qualification AI — section home (CEO Directive 003, Module 3).
@@ -41,6 +42,9 @@ export default async function QualificationHomePage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const [{ error }, metrics, candidatePage] = await Promise.all([
     searchParams,
     getQualificationMetrics(),

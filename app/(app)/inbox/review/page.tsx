@@ -7,6 +7,7 @@ import {
 import { EmptyState } from "../../_components/empty-state";
 import { InboxTabs } from "../_components/inbox-tabs";
 import { resolveAssistantAction } from "./actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /inbox/review — the WhatsApp assistant REVIEW queue.
@@ -43,6 +44,9 @@ const ERROR_MAP: Record<string, string> = {
 type SP = Promise<{ error?: string }>;
 
 export default async function ReviewQueuePage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("inbox", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const items = await listPendingAssistantActions(ctx.org.id);

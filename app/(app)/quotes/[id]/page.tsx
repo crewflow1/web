@@ -45,6 +45,7 @@ import {
   versionLabel,
   type QuoteVersionSnapshot,
 } from "@/lib/quotes/version-diff";
+import { requireCapability } from "@/server/auth/capabilities";
 
 // The AI quote writer (draftQuoteAction → generateQuoteDraft) is a one-shot,
 // user-initiated generation of a large structured draft that can run ~30-45s on
@@ -133,6 +134,9 @@ export default async function EditQuotePage({
   params: Promise<{ id: string }>;
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("quotes", "view");
   const { id } = await params;
   const sp = await searchParams;
 

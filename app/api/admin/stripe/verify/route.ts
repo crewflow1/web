@@ -272,6 +272,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ok: allOk,
     env_mode: isLiveMode() ? "LIVE" : "TEST",
     provision_url: `${env.NEXT_PUBLIC_APP_URL}/api/admin/stripe/provision`,
+    provision_method: "POST",
     ...(sampleCheckout !== null ? { sample_checkout: sampleCheckout } : {}),
     app_url: env.NEXT_PUBLIC_APP_URL,
     webhook_endpoint: `${env.NEXT_PUBLIC_APP_URL}/api/webhooks/stripe`,

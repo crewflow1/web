@@ -3,12 +3,16 @@ import { redirect } from "next/navigation";
 import { requireOrgContext } from "@/server/auth/session";
 import { createJobTemplate } from "../actions";
 import { TemplateForm } from "../_template-form";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Create-template page. Admin-only (the presentational gate; the RPC + RLS are
  * the real one). A member who reaches this URL is redirected to the list.
  */
 export default async function NewJobTemplatePage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("jobs", "manage");
   const { ctx } = await requireOrgContext();
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";

@@ -6,6 +6,7 @@ import type { ReportDocument } from "@/lib/reports/documents";
 import { BarChart, type ChartSeries, type ChartDatum } from "@/components/ui/charts";
 import type { Tone } from "@/components/ui/tokens";
 import { ReportView } from "../_report-view";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /reports/profit — Profit & loss. Composes the job-profitability authority
@@ -60,6 +61,9 @@ function marginSeries(doc: ReportDocument): ChartSeries[] {
 }
 
 export default async function ProfitReportPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("reports", "view");
   const { ctx } = await requireOrgContext();
   const role = ctx.membership.role;
   if (role !== "owner" && role !== "admin") redirect("/reports");

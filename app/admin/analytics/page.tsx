@@ -13,6 +13,7 @@ import {
 import { sparklinePoints } from "@/lib/hq/metrics";
 import { listRecentHealthEvents } from "@/server/services/hq-health-recompute";
 import { recomputeHealthNow } from "./actions";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Analytics + Health Engine — HQ-6.
@@ -47,6 +48,9 @@ export default async function HqAnalyticsPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
 
   const snap = await buildAnalyticsSnapshot();

@@ -7,12 +7,17 @@ import { Banner } from "../../_components/ui";
 import { errorMessage } from "../../_components/messages";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
 type SP = Promise<{ error?: string; import?: string }>;
 
 export default async function NewVehiclePage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["fleet", "view"], ["fuel_field", "view"]]);
+  await requireCapability("fleet", "create");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const [suppliers, sites, prefill] = await Promise.all([

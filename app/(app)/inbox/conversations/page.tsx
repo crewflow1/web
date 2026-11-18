@@ -5,6 +5,7 @@ import { INBOX_CHANNEL_LABELS, type InboxChannel } from "@/lib/inbox/channels";
 import { contactLabel, type ConversationSummary } from "@/lib/inbox/thread";
 import { EmptyState } from "../../_components/empty-state";
 import { InboxTabs } from "../_components/inbox-tabs";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /inbox/conversations — the UNIFIED communications inbox.
@@ -36,6 +37,9 @@ const ERROR_MAP: Record<string, string> = {
 type SP = Promise<{ view?: string; error?: string }>;
 
 export default async function ConversationsPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("inbox", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
 

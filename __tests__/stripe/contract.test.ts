@@ -281,7 +281,9 @@ describe("checkout server actions", () => {
     // redirects with ?error= and ?detail= so the page can render a
     // diagnostic banner instead of bouncing to /error.tsx.
     expect(CHECKOUT_ACTIONS).toMatch(/return session\.url/);
-    expect(CHECKOUT_ACTIONS).toMatch(/redirect\(target\)/);
+    // Navigation contract (deep-swap commit race doctrine): the action returns its target
+    // as FormState.redirectTo and the client StateForm does a full window.location.assign.
+    expect(CHECKOUT_ACTIONS).toMatch(/formSuccess\(\{ redirectTo \}\)/);
     expect(CHECKOUT_ACTIONS).toMatch(/\?error=\$\{encodeURIComponent\(code\)\}/);
   });
 
@@ -290,8 +292,7 @@ describe("checkout server actions", () => {
     () => {
       // Pin the safety net: outer action body has try/catch around
       // runCheckout, errors funnel into structured `[stripe-checkout]`
-      // logs, and redirect() runs OUTSIDE the try/catch (so it can
-      // throw NEXT_REDIRECT without being swallowed).
+      // logs, and a NEXT_REDIRECT from the admin gate is rethrown untouched.
       expect(CHECKOUT_ACTIONS).toMatch(/\[stripe-checkout\]/);
       expect(CHECKOUT_ACTIONS).toMatch(/isNextRedirect/);
       expect(CHECKOUT_ACTIONS).toMatch(/class CheckoutError/);

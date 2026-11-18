@@ -14,6 +14,7 @@ import {
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { env } from "@/lib/env";
 import type { CheckoutSessionMetadata } from "@/lib/stripe/events";
+import { formSuccess, type FormState } from "@/lib/forms/state";
 
 /**
  * Customer detail — Stripe checkout server actions (Stripe go-live).
@@ -326,23 +327,16 @@ function isNextRedirect(e: unknown): boolean {
 // PUBLIC: setup-fee checkout (£1,000 one-off)
 // --------------------------------------------------------------------
 
-export async function createSetupCheckout(formData: FormData): Promise<void> {
-  const orgIdForRedirect = stringOrEmpty(formData.get("org_id"));
-  let target: string;
-  try {
-    target = await runCheckout("setup_fee", formData);
-  } catch (e) {
-    if (isNextRedirect(e)) throw e;
-    const { code, detail } = errorParts(e);
-    console.error("[stripe-checkout][setup_fee] failed", {
-      org_id: orgIdForRedirect,
-      code,
-      detail,
-      stack: e instanceof Error ? e.stack : undefined,
-    });
-    target = `/admin/customers/${encodeURIComponent(orgIdForRedirect)}?error=${encodeURIComponent(code)}&detail=${encodeURIComponent(detail.slice(0, 240))}`;
-  }
-  redirect(target);
+export async function createSetupCheckout(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  // Navigation contract: the action RETURNS its target (hosted Stripe Checkout, or this page
+  // with ?error=&detail=) and the client StateForm does a full window.location.assign.
+  // A server-action redirect() here can be silently dropped by the Next 15.5 router
+  // (server work lands, URL stays) — see the "deep-swap commit race" doctrine.
+  const redirectTo = await checkoutTarget("setup_fee", formData);
+  return formSuccess({ redirectTo });
 }
 
 // --------------------------------------------------------------------
@@ -350,24 +344,34 @@ export async function createSetupCheckout(formData: FormData): Promise<void> {
 // --------------------------------------------------------------------
 
 export async function createSubscriptionCheckout(
+  _prev: FormState,
   formData: FormData,
-): Promise<void> {
+): Promise<FormState> {
+  const redirectTo = await checkoutTarget("subscription", formData);
+  return formSuccess({ redirectTo });
+}
+
+/**
+ * Runs a checkout and resolves the operator's next URL: the hosted Stripe Checkout on
+ * success, or this customer page with ?error=&detail= on any failure. Every Stripe
+ * error is caught and logged here so it never reaches Next's error boundary; a
+ * NEXT_REDIRECT from the admin gate is rethrown untouched.
+ */
+async function checkoutTarget(kind: CheckoutKind, formData: FormData): Promise<string> {
   const orgIdForRedirect = stringOrEmpty(formData.get("org_id"));
-  let target: string;
   try {
-    target = await runCheckout("subscription", formData);
+    return await runCheckout(kind, formData);
   } catch (e) {
     if (isNextRedirect(e)) throw e;
     const { code, detail } = errorParts(e);
-    console.error("[stripe-checkout][subscription] failed", {
+    console.error(`[stripe-checkout][${kind}] failed`, {
       org_id: orgIdForRedirect,
       code,
       detail,
       stack: e instanceof Error ? e.stack : undefined,
     });
-    target = `/admin/customers/${encodeURIComponent(orgIdForRedirect)}?error=${encodeURIComponent(code)}&detail=${encodeURIComponent(detail.slice(0, 240))}`;
+    return `/admin/customers/${encodeURIComponent(orgIdForRedirect)}?error=${encodeURIComponent(code)}&detail=${encodeURIComponent(detail.slice(0, 240))}`;
   }
-  redirect(target);
 }
 
 // --------------------------------------------------------------------

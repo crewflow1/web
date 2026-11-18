@@ -7,6 +7,7 @@ import type { FleetComplianceType } from "@/lib/fleet/compliance";
 import { EmptyState } from "../_components/empty-state";
 import { Banner, CompliancePill, Plate, SectionCard, Stat } from "./_components/ui";
 import { errorMessage, savedMessage } from "./_components/messages";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,9 @@ export const dynamic = "force-dynamic";
 type SP = Promise<{ saved?: string; error?: string }>;
 
 export default async function FleetPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["fleet", "view"], ["fuel_field", "view"]]);
   const { ctx } = await requireOrgContext(); await requireCapability("fleet", "view");
   const sp = await searchParams;
   const todayIso = new Date().toISOString().slice(0, 10);

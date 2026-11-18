@@ -8,6 +8,7 @@ import { listAiEmployees } from "@/server/services/ai-employees";
 import { Banner } from "../_components";
 import { MemoryForm } from "../_form";
 import { createMemoryAction } from "../actions";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Shared Memory Engine — create a memory (CEO Directive 002, Phase 2).
@@ -23,6 +24,9 @@ export default async function NewMemoryPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const [types, sources, employees] = await Promise.all([
     listMemoryTypes(true),

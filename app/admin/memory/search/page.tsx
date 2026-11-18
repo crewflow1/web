@@ -18,6 +18,7 @@ import {
 } from "@/lib/memory/model";
 import { EmptyState, MemoryCard, buildTypeMap } from "../_components";
 import { inputCls, selectCls } from "../_styles";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Shared Memory Engine — search (CEO Directive 002, Phase 2).
@@ -55,6 +56,9 @@ export default async function MemorySearchPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const [types, sources] = await Promise.all([
     listMemoryTypes(true),

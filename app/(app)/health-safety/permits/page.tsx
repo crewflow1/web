@@ -13,6 +13,7 @@ import {
   savedMessage,
   primaryBtn,
 } from "./_meta";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 /**
  * /health-safety/permits — the Permit-to-Work register.
@@ -31,6 +32,9 @@ export default async function PermitsRegisterPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["site_safety", "view"], ["site_safety_field", "view"]]);
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
 

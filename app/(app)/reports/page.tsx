@@ -22,6 +22,7 @@ import {
   isQuickbooksConnectable,
   isSageConnectable,
 } from "@/lib/integrations/accounting/oauth";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /reports — owner-facing time-series aggregates.
@@ -90,6 +91,9 @@ const CONNECT_ERROR: Record<string, string> = {
 type SP = Promise<{ connect?: string }>;
 
 export default async function ReportsPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("reports", "view");
   const sp = await searchParams;
   const connectSuccess = sp.connect ? (CONNECT_SUCCESS[sp.connect] ?? null) : null;
   const connectError = sp.connect ? (CONNECT_ERROR[sp.connect] ?? null) : null;

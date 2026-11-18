@@ -7,6 +7,7 @@ import { uploadBankCsv } from "./actions";
 import { StateForm } from "@/components/forms/StateForm";
 import { computeReceivables } from "@/lib/invoices/receivables";
 import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Payments overview — entry point for bank reconciliation.
@@ -24,6 +25,9 @@ const GBP = new Intl.NumberFormat("en-GB", {
 type SP = Promise<{ error?: string; saved?: string }>;
 
 export default async function PaymentsPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("payments", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();

@@ -5,6 +5,7 @@ import { getCompany, listSalesSources } from "@/server/services/hq-sales";
 import { Banner } from "../../../_components";
 import { CompanyForm } from "../../../_form";
 import { updateCompanyAction } from "../../../actions";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — edit a company (CEO Directive 003). Saving updates the
@@ -24,6 +25,9 @@ export default async function EditCompanyPage({
   params: Params;
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const { id } = await params;
   const sp = await searchParams;
 

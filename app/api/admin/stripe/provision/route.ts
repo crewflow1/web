@@ -4,6 +4,7 @@ import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { provisionStripeProducts } from "@/lib/stripe/provisioning";
 import { clearPriceCache } from "@/lib/stripe/prices";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { isSameOriginRequest } from "@/lib/security/same-origin";
 
 /**
  * CrewFlow — Stripe products + prices provisioner.
@@ -18,23 +19,19 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
  *
  * Super-admin gated. Returns 404 on miss (no info leak).
  *
- * Also exposed as GET so the CEO can click a link from
- * /admin/customers/<id> and see the JSON directly. The provisioning
- * itself is side-effecting (creates Stripe objects) but idempotent —
- * re-running is harmless.
+ * POST only, from a same-origin browser request: provisioning creates Stripe
+ * objects, so it must never run on a GET (a link, a prefetch, an <img>, a
+ * top-level navigation from another site). /admin/customers/<id> submits a
+ * POST form; Next answers any GET with 405.
  */
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(): Promise<NextResponse> {
-  return handle();
-}
-
-export async function GET(): Promise<NextResponse> {
-  // GET is provided for convenience — the CEO can navigate to this
-  // URL in a browser and see the JSON. The action is idempotent
-  // (Stripe-side) so GET-as-mutation doesn't cause double-creation.
+export async function POST(request: Request): Promise<NextResponse> {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "cross_origin_refused" }, { status: 403 });
+  }
   return handle();
 }
 

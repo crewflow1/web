@@ -12,6 +12,7 @@ import {
   type AssetOwnership,
   type AssetStatus,
 } from "@/lib/assets/schema";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 /**
  * /assets — the asset register. One org-scoped read; optional status filter.
@@ -58,6 +59,9 @@ type AssetQuery = Promise<{ data: AssetRow[] | null; error: SupabaseReadError | 
 type SP = Promise<{ status?: string; saved?: string; error?: string }>;
 
 export default async function AssetsPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
   const { ctx } = await requireOrgContext(); await requireCapability("assets", "view");
   const sp = await searchParams;
   const supabase = await createClient();

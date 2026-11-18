@@ -5,6 +5,7 @@ import {
   type OnboardingRow,
   type OnboardingImportRow,
 } from "@/server/services/hq-onboarding-snapshot";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Onboarding & migration — HQ-4.
@@ -32,6 +33,9 @@ export default async function HqOnboardingPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const rows = await listOnboardingForHq();
 

@@ -12,6 +12,7 @@ import {
 import { formatSiteAddress, siteKindLabel } from "@/lib/sites/schema";
 import { SiteForm } from "../_form";
 import { deleteSite, setSiteActive, updateSite } from "../actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,9 @@ export default async function SiteDetailPage({
   params: Promise<{ id: string }>;
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("sites", "view");
   const { id } = await params;
   const sp = await searchParams;
   const { ctx } = await requireOrgContext();

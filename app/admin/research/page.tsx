@@ -16,6 +16,7 @@ import { ResearchLauncher } from "./_launcher";
 import { Tile, ProvenanceBadge } from "./_components";
 import { STATUS_LABEL, STATUS_PILL, scoreTone } from "./_styles";
 import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Research AI — section home (CEO Directive 005, Phase 1 + 10).
@@ -34,6 +35,9 @@ export default async function ResearchHomePage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const [{ error }, metrics, aiEnabled] = await Promise.all([
     searchParams,
     getResearchMetrics(),

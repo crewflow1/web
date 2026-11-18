@@ -6,6 +6,7 @@ import { loadStockItem, type StockClient } from "@/server/services/stock";
 import { listSuppliersForOrg, type SuppliersClient } from "@/server/services/suppliers";
 import { updateStockItem } from "../../../actions";
 import { StockItemForm } from "../../_form";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,10 @@ const text = (v: unknown): string | undefined =>
   v === null || v === undefined ? undefined : String(v);
 
 export default async function EditStockItemPage({ params }: { params: Params }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["stock", "view"], ["stock_field", "view"]]);
+  await requireCapability("stock", "edit");
   const { id } = await params;
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();

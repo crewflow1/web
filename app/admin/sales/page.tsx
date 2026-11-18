@@ -24,6 +24,7 @@ import {
   Tile,
   TimelineItem,
 } from "./_components";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI Platform — command dashboard (CEO Directive 003, Phase 1).
@@ -50,6 +51,9 @@ const HEADLINE: { key: string; accent?: boolean }[] = [
 ];
 
 export default async function SalesDashboardPage() {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const d = await getSalesDashboard();
 
   return (

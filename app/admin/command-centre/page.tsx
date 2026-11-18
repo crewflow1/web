@@ -16,6 +16,7 @@ import {
   type ExecTrend,
 } from "@/lib/hq/executive";
 import { ExecCounter, LiveDot } from "./_counter";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * CrewFlow HQ — Command Centre (CEO Directive 004, Phase 2).
@@ -48,7 +49,10 @@ const ACCENT: Record<ExecAccent, { text: string; glow: string }> = {
   slate: { text: "text-slate-200", glow: "bg-slate-500/20" },
 };
 
-export default function CommandCentrePage() {
+export default async function CommandCentrePage() {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
       <Header />

@@ -3,6 +3,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { buildReportDocument } from "@/lib/reports/report-data";
 import { ReportView } from "../_report-view";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /reports/utilisation — Staff utilisation. Composes the intelligence
@@ -14,6 +15,9 @@ import { ReportView } from "../_report-view";
  * as the profit report applies — gate the direct URL to owner/admin.
  */
 export default async function UtilisationReportPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("reports", "view");
   const { ctx } = await requireOrgContext();
   const role = ctx.membership.role;
   if (role !== "owner" && role !== "admin") redirect("/reports");

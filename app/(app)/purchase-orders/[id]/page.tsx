@@ -44,6 +44,7 @@ import { RecordBillForm } from "./_bill-form";
 import { ReceiveDeliveryForm } from "./_receive-form";
 import { ReceiveIntoStockForm } from "./_receive-into-stock";
 import { VoidDeliveryForm } from "./_void-form";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
 
@@ -114,6 +115,9 @@ export default async function PurchaseOrderDetailPage({
     stocked?: string;
   }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["purchase_orders", "view"], ["goods_receiving_field", "view"]]);
   const { id } = await params;
   const { saved, error, received, grn, stocked } = await searchParams;
 

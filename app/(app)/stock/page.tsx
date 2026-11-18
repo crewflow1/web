@@ -9,6 +9,7 @@ import { formatQuantity } from "@/lib/stock/movements";
 import { siteKindLabel } from "@/lib/sites/schema";
 import { EmptyState } from "../_components/empty-state";
 import { AccountingNote, Card, CardHeader, Effect, LevelPill, MovementPill, Qty, Tile } from "./_components/ui";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,9 @@ const SAVED: Record<string, string> = {
 type SP = Promise<{ saved?: string; error?: string }>;
 
 export default async function StockPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["stock", "view"], ["stock_field", "view"]]);
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const sp = await searchParams;

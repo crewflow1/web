@@ -26,6 +26,9 @@ export default async function EditPriceBookItemPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("price_book", "view");
   const { id } = await params;
   const { ctx } = await requireCapability("price_book", "edit");
   const item = await getPriceBookItem(ctx.org.id, id);

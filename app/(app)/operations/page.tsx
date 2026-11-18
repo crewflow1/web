@@ -24,6 +24,7 @@ import { Badge, StatTile } from "@/components/ui";
 // encode wording (a day count becomes "12d late"), not just colour, so they stay
 // where the domain rules live.
 import { Banner, CompliancePill, Plate, SectionCard } from "../fleet/_components/ui";
+import { requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,9 @@ export const metadata = { title: "Operations · CrewFlow" };
  * would be a bug in one shared function, not two opinions.
  */
 export default async function OperationsPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("operations", "view");
   const { ctx } = await requireOrgContext();
   const snapshot = await buildOperationsSnapshot(ctx.org.id);
   const { view, costs, window } = snapshot;

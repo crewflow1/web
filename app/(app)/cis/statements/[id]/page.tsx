@@ -17,6 +17,7 @@ import { formatGbp, round2, toPounds } from "@/lib/money";
 import { WithdrawStatementForm } from "../../_forms";
 import { issueCisStatement, withdrawCisStatement } from "../../actions";
 import { IssueStatementButton } from "../../_forms";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * One issued payment and deduction statement.
@@ -41,6 +42,9 @@ export default async function CisStatementPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("cis", "view");
   const { id } = await params;
   const { ctx } = await requireOrgContext();
 

@@ -4,12 +4,16 @@ import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 import { SupplierForm } from "../_form";
 import { createSupplier } from "../actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 export default async function NewSupplierPage({
   searchParams,
 }: {
   searchParams: Promise<{ import?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("suppliers", "view");
   await requireOrgContext();
 
   const sp = await searchParams;

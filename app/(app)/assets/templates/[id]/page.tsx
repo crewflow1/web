@@ -28,6 +28,7 @@ import {
 } from "../../template-actions";
 import { StateForm } from "@/components/forms/StateForm";
 import type { FormState } from "@/lib/forms/state";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const metadata = { title: "Inspection template · CrewFlow" };
 
@@ -84,6 +85,10 @@ export default async function TemplateEditorPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
+  await requireCapability("assets", "view");
   const { id } = await params;
   const sp = await searchParams;
   const { ctx } = await requireOrgContext();

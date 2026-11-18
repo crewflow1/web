@@ -13,6 +13,7 @@ import {
   listPriceBookForPicker,
   listQuoteTemplatesForBuilder,
 } from "@/lib/pricing/queries";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * New-quote page.
@@ -30,6 +31,9 @@ type SP = Promise<{
 }>;
 
 export default async function NewQuotePage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("quotes", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();

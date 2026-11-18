@@ -31,6 +31,7 @@ import {
   type PayableBill,
 } from "./_forms";
 import { recordCisPaymentAction, recordPayment, saveBillDetails, voidPayment } from "./actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Supplier payments — the money-OUT surface (H2-CIS M2).
@@ -91,6 +92,9 @@ export default async function SupplierPaymentsPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("suppliers", "view");
   const { id } = await params;
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();

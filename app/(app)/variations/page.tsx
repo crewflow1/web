@@ -7,6 +7,7 @@ import {
   VARIATION_REQUEST_URGENCY_LABELS,
   type VariationRequestStatus,
 } from "@/lib/variation-requests/schema";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /variations — the cross-job Variation-requests register.
@@ -61,6 +62,9 @@ function matches(v: VariationListItem, filter: Filter): boolean {
 }
 
 export default async function VariationsRegisterPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("quotes", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const rows = await listVariationRequests(ctx.org.id);

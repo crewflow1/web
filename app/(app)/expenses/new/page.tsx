@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadExpenseReceipt } from "../actions";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 const ERROR_MAP: Record<string, string> = {
   no_file: "Pick a file to upload.",
@@ -17,6 +18,9 @@ export default async function NewExpensePage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["expenses", "view"], ["job_costs_field", "view"]]);
   await requireOrgContext();
   const sp = await searchParams;
   const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? sp.error : null;

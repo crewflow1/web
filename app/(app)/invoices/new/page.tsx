@@ -5,6 +5,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import { NewInvoiceForm } from "./_form";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * New-invoice page: server-fetches the org's ACCEPTED quotes for the
@@ -18,6 +19,9 @@ import { NewInvoiceForm } from "./_form";
  * — when no quote is accepted yet — leave the user on a dead, disabled form.
  */
 export default async function NewInvoicePage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("invoices", "view");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   // COMPLETE read (F-1). The old `.limit(500)` capped this picker: an org with

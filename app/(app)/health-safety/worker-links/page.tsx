@@ -4,6 +4,7 @@ import { listWorkerLinks, listJobOptions, type WorkerLinkRow } from "./_data";
 import { IssueWorkerLinkForm } from "./_issue-form";
 import { RevokeForm } from "./_revoke-form";
 import { issueWorkerLink, revokeWorkerLink } from "./actions";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /health-safety/worker-links — issue and revoke external-worker H&S sign-off
@@ -30,6 +31,10 @@ export default async function WorkerLinksPage({
 }: {
   searchParams: Promise<{ saved?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["site_safety", "view"], ["site_safety_field", "view"]]);
+  await requireCapability("site_safety", "manage");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const [links, jobs] = await Promise.all([

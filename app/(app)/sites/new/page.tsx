@@ -5,6 +5,7 @@ import { SiteForm } from "../_form";
 import { createSite } from "../actions";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,9 @@ export default async function NewSitePage({
 }: {
   searchParams: Promise<{ import?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("sites", "view");
   const { ctx } = await requireOrgContext();
   // Sites are reference data: `sites_insert` is `is_org_admin(org_id)`, so a
   // member reaching this URL would fill the form in and be refused by RLS on

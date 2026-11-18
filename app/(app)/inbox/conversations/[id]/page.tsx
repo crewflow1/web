@@ -9,6 +9,7 @@ import {
 } from "@/lib/inbox/channels";
 import { contactLabel, type InboxMessage } from "@/lib/inbox/thread";
 import { replyToConversation, setConversationStatus } from "../actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /inbox/conversations/[id] — one conversation thread + the reply composer.
@@ -48,6 +49,9 @@ export default async function ThreadPage({
   params: Params;
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("inbox", "view");
   const { ctx } = await requireOrgContext();
   const { id } = await params;
   const sp = await searchParams;
