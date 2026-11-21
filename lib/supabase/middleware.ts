@@ -135,6 +135,7 @@ export async function updateSession(request: NextRequest, requestId?: string) {
     pathname.startsWith("/developers") ||
     pathname.startsWith("/privacy") ||
     pathname.startsWith("/terms") ||
+    pathname.startsWith("/third-party-notices") || // page + /third-party-notices.txt (licence attribution)
     pathname.startsWith("/q/") || // public per-quote view
     pathname.startsWith("/customer-portal/") || // customer-scoped portal
     pathname.startsWith("/worker-portal/") || // external-worker H&S sign-off (token-gated)
