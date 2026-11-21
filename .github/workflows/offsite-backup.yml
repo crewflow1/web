@@ -1,0 +1,225 @@
+# Independent off-site backup — production database + Storage, daily, off the founder's Mac.
+#
+# WHY THIS EXISTS: the only backup that covers Storage objects and survives the loss of
+# the Supabase account ran on one laptop, and only when it was awake (gaps of up to 12
+# days). This workflow runs the same job on infrastructure independent of that Mac, of
+# Supabase and of Vercel. Design + threat model: docs/programme/backup/
+# INDEPENDENT-RUNNER-DESIGN.md. Restore procedure: docs/backup-recovery-runbook.md.
+#
+# INERT BY DEFAULT: merging this file starts NOTHING. Until the founder creates the
+# `offsite-backup` environment secrets listed in docs/programme/backup/FOUNDER-CHECKLIST.md
+# every run prints "not configured" and exits successfully. A PARTIAL set of secrets is a
+# misconfiguration and fails loudly, naming the missing secrets (names only).
+#
+# THIS REPOSITORY IS PUBLIC — so are this workflow's logs, summaries and issues. Rules
+# this file and the scripts it calls obey (pinned by __tests__/ci/offsite-backup.test.ts):
+#   - NO row counts, object counts, object names or tool error text are ever printed
+#     (CF_OFFSITE_REDACT=1). Stage names, timings and PASS/FAIL only.
+#   - NOTHING is uploaded as a workflow artifact and nothing is cached.
+#   - Secrets reach the scripts as environment variables, never as `${{ }}` inside a
+#     `run:` script, and never as command-line arguments.
+#   - No `pull_request` trigger: a fork or a PR can never run this or reach its secrets.
+#   - The only third-party code is `actions/checkout`, pinned by COMMIT SHA. Postgres
+#     tools come from an image pinned by DIGEST. `age` and `rclone` come from Ubuntu's
+#     signed archive on a pinned runner release.
+#
+# WHAT THE RUNNER CAN AND CANNOT DO (by construction, see the design doc):
+#   - reads production through a dedicated READ-ONLY database role;
+#   - encrypts to `age` PUBLIC keys — it holds no key that can decrypt a backup;
+#   - uploads with a key that cannot read or delete; retention is the bucket's job.
+#
+# HONEST LIMITATIONS:
+#   - GitHub cron is best-effort (minutes late, occasionally skipped).
+#   - In a public repository GitHub disables scheduled workflows after 60 days without
+#     repository activity. The `keepalive` job resets that timer; the dead-man's-switch
+#     ping (OFFSITE_BACKUP_HEALTHCHECK_URL) is the control that catches silence.
+#   - Plaintext exists on the ephemeral runner VM for the minutes between dump and
+#     encryption. That is a founder decision recorded in the design doc.
+
+name: offsite-backup
+
+on:
+  schedule:
+    # Daily 02:23 UTC — after the UK working day, off the congested :00 minute.
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      restore_verify:
+        description: "Restore the backup into a throwaway Postgres before recording success"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offsite-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: backup (db + storage, encrypted, restore-verified)
+    # Never on a fork: forks have no secrets and must not open issues upstream.
+    if: github.repository == 'crewflow1/web'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # Secrets live in THIS environment, restricted (by the founder) to the `main`
+    # branch, so a workflow dispatched from any other branch cannot read them.
+    # No required reviewers: a scheduled run must not wait for a click.
+    environment: offsite-backup
+    permissions:
+      contents: read
+      packages: read # authenticated pulls of the pinned Postgres image from GHCR
+      issues: write # the deduplicated failure issue
+    steps:
+      - name: Checkout (scripts only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/ops
+          sparse-checkout-cone-mode: true
+
+      - name: Configuration gate (inert until the founder adds secrets)
+        id: gate
+        env:
+          CF_OFFSITE_DB_URL: ${{ secrets.OFFSITE_BACKUP_DB_URL }}
+          CF_OFFSITE_S3_ENDPOINT: ${{ secrets.OFFSITE_BACKUP_S3_ENDPOINT }}
+          CF_OFFSITE_S3_REGION: ${{ secrets.OFFSITE_BACKUP_S3_REGION }}
+          CF_OFFSITE_S3_ACCESS_KEY_ID: ${{ secrets.OFFSITE_BACKUP_S3_ACCESS_KEY_ID }}
+          CF_OFFSITE_S3_SECRET_ACCESS_KEY: ${{ secrets.OFFSITE_BACKUP_S3_SECRET_ACCESS_KEY }}
+          CF_OFFSITE_AGE_RECIPIENTS: ${{ secrets.OFFSITE_BACKUP_AGE_RECIPIENTS }}
+          CF_OFFSITE_B2_KEY_ID: ${{ secrets.OFFSITE_BACKUP_B2_KEY_ID }}
+          CF_OFFSITE_B2_APPLICATION_KEY: ${{ secrets.OFFSITE_BACKUP_B2_APPLICATION_KEY }}
+          CF_OFFSITE_B2_BUCKET: ${{ secrets.OFFSITE_BACKUP_B2_BUCKET }}
+        run: |
+          set -uo pipefail
+          # Prints NAMES of missing settings only — never a value.
+          STATE="$(bash scripts/ops/offsite-backup.sh --check-config)"; RC=$?
+          case "$STATE" in
+            NOT_CONFIGURED)
+              echo "::notice title=Off-site backup not configured::No backup secrets are set, so this run did nothing. See docs/programme/backup/FOUNDER-CHECKLIST.md."
+              echo "Off-site backup is **not configured** — nothing was run. See \`docs/programme/backup/FOUNDER-CHECKLIST.md\`." >>"$GITHUB_STEP_SUMMARY"
+              echo "configured=false" >>"$GITHUB_OUTPUT"
+              exit 0 ;;
+            CONFIGURED)
+              echo "configured=true" >>"$GITHUB_OUTPUT"
+              exit 0 ;;
+            *)
+              echo "::error title=Off-site backup partially configured::${STATE}"
+              echo "configured=partial" >>"$GITHUB_OUTPUT"
+              exit "${RC:-2}" ;;
+          esac
+
+      - name: Install age + rclone (Ubuntu signed archive)
+        if: steps.gate.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends age rclone
+          age --version
+          rclone version | head -1
+
+      - name: Authenticate to GHCR (pinned Postgres image)
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          # Plain docker login with the job token — no third-party login action.
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin >/dev/null
+
+      - name: Back up, encrypt, upload, restore-verify, heartbeat
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          CF_OFFSITE_DB_URL: ${{ secrets.OFFSITE_BACKUP_DB_URL }}
+          CF_OFFSITE_S3_ENDPOINT: ${{ secrets.OFFSITE_BACKUP_S3_ENDPOINT }}
+          CF_OFFSITE_S3_REGION: ${{ secrets.OFFSITE_BACKUP_S3_REGION }}
+          CF_OFFSITE_S3_ACCESS_KEY_ID: ${{ secrets.OFFSITE_BACKUP_S3_ACCESS_KEY_ID }}
+          CF_OFFSITE_S3_SECRET_ACCESS_KEY: ${{ secrets.OFFSITE_BACKUP_S3_SECRET_ACCESS_KEY }}
+          CF_OFFSITE_AGE_RECIPIENTS: ${{ secrets.OFFSITE_BACKUP_AGE_RECIPIENTS }}
+          CF_OFFSITE_B2_KEY_ID: ${{ secrets.OFFSITE_BACKUP_B2_KEY_ID }}
+          CF_OFFSITE_B2_APPLICATION_KEY: ${{ secrets.OFFSITE_BACKUP_B2_APPLICATION_KEY }}
+          CF_OFFSITE_B2_BUCKET: ${{ secrets.OFFSITE_BACKUP_B2_BUCKET }}
+          CF_OFFSITE_HEALTHCHECK_URL: ${{ secrets.OFFSITE_BACKUP_HEALTHCHECK_URL }}
+          CF_OFFSITE_RUNNER_TAG: github-actions
+          # PUBLIC LOGS: withhold every row/object count. Do not change to 0.
+          CF_OFFSITE_REDACT: "1"
+          # Scheduled runs always verify; a manual run may skip it for a quick capture test.
+          CF_OFFSITE_VERIFY: ${{ (github.event_name == 'workflow_dispatch' && inputs.restore_verify == false) && '0' || '1' }}
+          # supabase/postgres 17.6.1.121 (same Postgres major as production), by digest.
+          CF_PG_IMAGE: "ghcr.io/supabase/postgres@sha256:69e57a409628a809e3778a4d176eb97e32d7c961131ac025b77ad094c0b2d49e"
+        run: |
+          set -euo pipefail
+          bash scripts/ops/offsite-backup.sh
+          echo "Off-site backup **succeeded** (encrypted, uploaded, restore-verified where enabled)." >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Raise or update the failure issue (deduped — one open issue)
+        if: failure() && steps.gate.outputs.configured != 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          # PUBLIC issue: generic text only. The failing STAGE is in the run log and in
+          # /admin/ops (ops_backup_runs.stage / .error) — never copied here.
+          TITLE="Off-site backup FAILED (independent runner)"
+          STAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          gh label create backup-failure --color B60205 \
+            --description "Automated: the independent off-site backup workflow failed" \
+            --force 2>/dev/null || true
+          NUM=$(gh issue list -R "$REPO" --state open --label backup-failure \
+            --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+          if [ -z "$NUM" ]; then
+            BODY=$(printf '%s\n' \
+              "**Automated alert — the independent off-site backup run failed at ${STAMP}.**" \
+              "" \
+              "**Run:** ${RUN_URL}" \
+              "" \
+              "**Act now — in order:**" \
+              "1. Open the run and read which stage failed (stage names only are logged)." \
+              "2. Open \`/admin/ops\` → Off-platform backup for the recorded stage and reason." \
+              "3. Follow the troubleshooting table in \`docs/backup-recovery-runbook.md\`." \
+              "" \
+              "_One open issue at a time; it is closed automatically by the next successful run._")
+            gh issue create -R "$REPO" --title "$TITLE" --label backup-failure --body "$BODY"
+          else
+            gh issue comment "$NUM" -R "$REPO" --body "Failed again at ${STAMP} — run: ${RUN_URL}"
+          fi
+
+      - name: Close the failure issue on success
+        if: success() && steps.gate.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          NUM=$(gh issue list -R "$REPO" --state open --label backup-failure \
+            --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" -R "$REPO" \
+              --body "Recovered: off-site backup succeeded at $(date -u '+%Y-%m-%d %H:%M UTC')." || true
+            gh issue close "$NUM" -R "$REPO" --reason completed || true
+          fi
+
+  keepalive:
+    name: keep the schedule enabled
+    # Public repositories lose scheduled workflows after 60 days without activity.
+    # Re-enabling the workflow through the API resets that timer. No secrets here.
+    if: github.repository == 'crewflow1/web' && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable this workflow (resets the 60-day inactivity timer)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          gh api -X PUT "repos/${REPO}/actions/workflows/offsite-backup.yml/enable" >/dev/null \
+            && echo "schedule keep-alive sent" \
+            || echo "::warning::could not send the schedule keep-alive (the dead-man's switch still covers silence)"

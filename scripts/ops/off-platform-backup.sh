@@ -11,8 +11,8 @@
 #  - The Mac scheduler (launchd) is only an EXECUTION mechanism. The source of
 #    truth for backup health is the validated heartbeat in `ops_backup_runs`
 #    (surfaced in /admin/ops). A miss/failure therefore becomes LOUD, not silent.
-#  - Captures: Postgres schema + public data + auth data + ALL Supabase Storage
-#    objects (customer documents).
+#  - Captures: Postgres schema + public data + auth data + the migration history + ALL
+#    Supabase Storage objects (customer documents).
 #  - Validates: checksums + pg_dump completeness BEFORE anything is called a success.
 #  - Encrypts LOCALLY (AES-256, openssl) before any upload. The remote receives
 #    ONLY the encrypted artifact — never plaintext dumps / Storage objects / PII.
@@ -30,11 +30,40 @@
 #   CF_BACKUP_RCLONE_REMOTE rclone remote:bucket for the encrypted artifact (default r2:crewflow-prod-backups)
 #   CF_BACKUP_RETENTION     number of backups to retain              (default 8)
 #   CF_BACKUP_LOG_DIR       log dir                                  (default ~/.local/state/crewflow-backup/logs)
+#   CF_BACKUP_MODE          backup (default) | preflight (checks only; no dump, no heartbeat)
+#   CF_BACKUP_FORCE         1 = run even if today's verified backup already exists
+#   CF_BACKUP_STEP_TIMEOUT  seconds before a hung dump / storage copy is killed (default 900)
+#   CF_BACKUP_EXPECT_REF    the only Supabase project ref this script will back up
+#   CF_BACKUP_KEEP_PLAINTEXT 1 = keep the plaintext dump dir after success (default 0 = remove it)
 #
 set -Eeuo pipefail
 
 # node/supabase live in /opt/homebrew/bin, which is NOT on launchd's default PATH.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
+# --- STAY AWAKE (root cause of the failed 03:17 runs, 2026-11) ---------------------------
+# launchd fires a StartCalendarInterval job inside a ~5-second DarkWake and the Mac then goes
+# straight back to "Maintenance Sleep". The script kept running in 5-second slivers for 2–3
+# HOURS, and every sleep killed pg_dump's TLS connection ("SSL SYSCALL error: EOF detected")
+# or DNS. Re-exec under caffeinate so the machine stays awake for exactly as long as the
+# backup runs: -i no idle sleep, -m no disk sleep, -s no system sleep on AC power.
+# (On battery with the lid closed macOS can still force sleep — the step timeouts, the fast
+# preflight and the daytime catch-up slots in the launchd plist cover that case.)
+if [ -z "${CF_BACKUP_CAFFEINATED:-}" ] && command -v caffeinate >/dev/null 2>&1; then
+  export CF_BACKUP_CAFFEINATED=1
+  exec caffeinate -i -m -s /bin/bash "$0" "$@"
+fi
+
+# CF_BACKUP_MODE=preflight  → run ONLY the preflight (power, network, Docker, project identity,
+#                             remote, key) and exit: no dump, no upload, NO heartbeat row.
+#                             Used to test the scheduler without touching production data.
+MODE="${CF_BACKUP_MODE:-backup}"
+# The ONLY project this script may ever back up. A relinked directory fails the preflight.
+EXPECT_REF="${CF_BACKUP_EXPECT_REF:-jzntbskdqdopzwdqwvkp}"
+# Per-step watchdog (seconds). A healthy run takes ~5 min in total; a step that exceeds this is
+# hung (sleep-frozen connection, stalled pooler) and is killed so the retry / next slot can run.
+STEP_TIMEOUT="${CF_BACKUP_STEP_TIMEOUT:-900}"
+case "$STEP_TIMEOUT" in ''|*[!0-9]*) STEP_TIMEOUT=900 ;; esac
 
 LINK_DIR="${CF_BACKUP_LINK_DIR:-$HOME/Code/web}"
 BACKUP_ROOT="${CF_BACKUP_ROOT:-$HOME/CrewFlow-backups}"
@@ -90,17 +119,34 @@ retry_capture(){ # retry_capture <varname> <desc> <cmd...> — captures stdout i
 # under a non-interactive/minimal environment (e.g. launchd), which broke the old
 # grep-for-'"rows"' parsing and failed every scheduled run. `--output-format json` forces
 # a deterministic JSON ARRAY ([{...}]) regardless of TTY/env — the key reliability fix.
-_db_dump(){ ( cd "$LINK_DIR" && supabase db dump --linked "$@" ) >>"$LOG_FILE" 2>&1; }
+# with_timeout <secs> <cmd...> — run cmd, TERM it if it outlives the budget (rc 124-style failure).
+with_timeout(){
+  local t="$1"; shift
+  "$@" & local pid=$!
+  ( sleep "$t"; kill -TERM "$pid" 2>/dev/null ) >/dev/null 2>&1 & local wd=$!
+  local rc=0; wait "$pid" || rc=$?
+  kill "$wd" 2>/dev/null || true; wait "$wd" 2>/dev/null || true
+  return "$rc"
+}
+_db_dump(){ ( cd "$LINK_DIR" && with_timeout "$STEP_TIMEOUT" supabase db dump --linked "$@" ) >>"$LOG_FILE" 2>&1; }
 _db_query(){ ( cd "$LINK_DIR" && supabase db query --linked --output-format json "$1" ); }
-_storage_cp(){ ( cd "$LINK_DIR" && supabase storage cp --experimental --recursive "$1" "$2" ) >>"$LOG_FILE" 2>&1; }
+_storage_cp(){ ( cd "$LINK_DIR" && with_timeout "$STEP_TIMEOUT" supabase storage cp --experimental --recursive "$1" "$2" ) >>"$LOG_FILE" 2>&1; }
 
 # query_json <desc> <sql> -> prints a JSON array to stdout, retried until the CLI returns
 # VALID JSON (so a transient blip OR a stray non-JSON line can never be mis-parsed as data).
 query_json(){
   local desc="$1" sql="$2" n=1 delay=5 out=""
   while :; do
-    out="$( _db_query "$sql" 2>>"$LOG_FILE" )"
-    if printf '%s' "$out" | python3 -c 'import sys,json; sys.exit(0 if isinstance(json.load(sys.stdin),list) else 1)' 2>/dev/null; then
+    out="$( _db_query "$sql" 2>>"$LOG_FILE" )" || true
+    # The CLI returns a bare JSON array — EXCEPT when it detects an AI-agent / automation
+    # environment, where it wraps the rows as {"boundary":…,"rows":[…],"warning":…}. Accept
+    # both and always hand the caller the plain array (a wrapped reply failed the old
+    # list-only check and aborted the run at the very first stage, 2026-11-15 20:00).
+    if out="$(printf '%s' "$out" | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+if isinstance(d,dict) and isinstance(d.get("rows"),list): d=d["rows"]
+if not isinstance(d,list): sys.exit(1)
+json.dump(d,sys.stdout)' 2>/dev/null)"; then
       printf '%s' "$out"; return 0
     fi
     if [ "$n" -ge "$RETRY_TRIES" ]; then log "query_json GAVE UP after $n attempts: $desc"; return 1; fi
@@ -149,11 +195,16 @@ PY
 
 on_error(){
   local rc=$?
+  # A failing command inside a $(...) / (...) subshell inherits this trap (set -E). The caller
+  # handles that failure itself (retry / "|| true"), so the subshell must NOT record a failed
+  # run, write LAST_FAILURE.txt or raise a notification — it used to do all three mid-run.
+  [ "${BASH_SUBSHELL:-0}" -gt 0 ] && exit "$rc"
   [ "$STATUS" = "success" ] && return 0
   STATUS="failed"
   [ -z "$ERR" ] && ERR="unexpected failure (rc=$rc) at stage=$STAGE"
   log "ABORT: $ERR"
-  write_heartbeat "failed" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
+  # preflight-only mode never writes to production, not even a failure row.
+  [ "$MODE" = "preflight" ] || write_heartbeat "failed" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
   # --- ALERTING: a failed backup must never be silent, even if nobody opens /admin/ops. ---
   # (a) Persistent marker the next run / an operator can see; (b) best-effort desktop
   # notification on the GUI session. Both are guarded so alerting can never itself abort.
@@ -185,6 +236,61 @@ fi
 cleanup_lock(){ [ "$I_OWN_LOCK" = "1" ] && rm -rf "$LOCK_DIR" 2>/dev/null || true; }
 trap cleanup_lock EXIT
 
+# === Stage 0: preflight — fail FAST and LOUD instead of retrying a doomed run for hours ===
+STAGE="preflight"
+preflight_fail(){ ERR="preflight failed: $1"; log "PREFLIGHT FAIL: $1"; return 1; }
+PWR="$(pmset -g batt 2>/dev/null | head -1 | sed "s/.*'\(.*\)'.*/\1/" || true)"
+BATT="$(pmset -g batt 2>/dev/null | grep -Eo '[0-9]+%' | head -1 | tr -d '%' || true)"
+log "mode=$MODE power=${PWR:-unknown}${BATT:+ battery=${BATT}%} sleep-prevention=$([ -n "${CF_BACKUP_CAFFEINATED:-}" ] && echo on || echo OFF)"
+if [ "${PWR:-}" = "Battery Power" ] && [ -n "$BATT" ] && [ "$BATT" -lt 15 ]; then
+  preflight_fail "on battery at ${BATT}% — not starting a run that may be cut off (a later slot will retry)"
+fi
+# 0a. project identity: this script may only ever touch the production project it was written for.
+REF="$(cat "$LINK_DIR/supabase/.temp/project-ref" 2>/dev/null || true)"
+[ "$REF" = "$EXPECT_REF" ] || preflight_fail "linked Supabase project is '${REF:-none}', expected '$EXPECT_REF'"
+# 0b. network: a DarkWake brings the network up a few seconds late — wait up to 2 min, then stop.
+NET_OK=0
+for _i in $(seq 1 24); do
+  if curl -sS -m 8 -o /dev/null "https://api.supabase.com/" 2>/dev/null; then NET_OK=1; break; fi
+  sleep 5
+done
+[ "$NET_OK" = "1" ] || preflight_fail "no network route to api.supabase.com after 2 minutes"
+# 0c. Docker: `supabase db dump` runs pg_dump in a container. Start Docker if it is not up.
+if ! docker info >/dev/null 2>&1; then
+  log "Docker is not running — starting it"
+  open -ga Docker >/dev/null 2>&1 || true
+  for _i in $(seq 1 36); do docker info >/dev/null 2>&1 && break; sleep 5; done
+fi
+docker info >/dev/null 2>&1 || preflight_fail "Docker is not running (supabase db dump needs it)"
+# 0d. off-site remote reachable with its stored credentials (nothing is printed).
+rclone listremotes 2>/dev/null | grep -q "^${RCLONE_REMOTE%%:*}:" || preflight_fail "rclone remote '${RCLONE_REMOTE%%:*}' is not configured"
+rclone lsf "$RCLONE_REMOTE/" --max-depth 1 >/dev/null 2>&1 || preflight_fail "cannot list $RCLONE_REMOTE (credentials or network)"
+# 0e. encryption key: NEVER silently mint a new key when earlier backups exist — they would look
+#     healthy while being encrypted with a key nobody has backed up.
+if [ ! -s "$ENC_KEY_FILE" ] && ls "$BACKUP_ROOT"/*.tar.enc >/dev/null 2>&1; then
+  preflight_fail "encryption key file is missing but encrypted backups exist — restore the key, do not generate a new one"
+fi
+# 0f. production database reachable through the CLI (read-only `select 1`).
+query_json "preflight ping" "select 1 as ok;" >/dev/null || preflight_fail "production database is not reachable through the Supabase CLI"
+log "preflight PASSED"
+if [ "$MODE" = "preflight" ]; then
+  log "preflight-only mode: nothing dumped, nothing uploaded, no heartbeat written"
+  STATUS="success"; rmdir "$BK" 2>/dev/null || true; exit 0
+fi
+
+# === Already done today? (the launchd agent has several daily slots so that a run missed or
+#     failed at 03:17 is retried when the Mac is actually awake; the later slots must be no-ops
+#     once a verified backup for today exists locally AND off-site.) CF_BACKUP_FORCE=1 overrides.
+STAGE="already_done_check"
+if [ "${CF_BACKUP_FORCE:-0}" != "1" ] && [ -s "$ENC_ARTIFACT" ] && [ -s "${ENC_ARTIFACT}.sha256" ] \
+   && [ "$(shasum -a 256 "$ENC_ARTIFACT" | awk '{print $1}')" = "$(cat "${ENC_ARTIFACT}.sha256")" ]; then
+  _RS="$(rclone size "$RCLONE_REMOTE/$(basename "$ENC_ARTIFACT")" --json 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin).get('bytes',-1))" 2>/dev/null || echo -1)"
+  if [ "$_RS" = "$(wc -c < "$ENC_ARTIFACT" | tr -d ' ')" ]; then
+    log "backup for $DATE is already complete (local checksum OK, off-site size matches) — nothing to do"
+    STATUS="success"; rmdir "$BK" 2>/dev/null || true; exit 0
+  fi
+fi
+
 log "CrewFlow off-platform backup starting (run_id=$RUN_ID, dir=$BK)"
 write_heartbeat "running" ""
 
@@ -199,6 +305,10 @@ STAGE="db_dump"
 retry "schema dump"      _db_dump -f "$BK/schema.sql"                        || { ERR="schema dump failed after retries"; log "FATAL: $ERR"; false; }
 retry "public data dump" _db_dump --data-only -f "$BK/data.sql"             || { ERR="public data dump failed after retries"; log "FATAL: $ERR"; false; }
 retry "auth data dump"   _db_dump --data-only --schema auth -f "$BK/auth-data.sql" || { ERR="auth data dump failed after retries"; log "FATAL: $ERR"; false; }
+# The migration HISTORY lives in its own schema and was never captured (found by the first real
+# restore test, 2026-11-15): a restored database had the right schema but no record of which
+# migrations it was at. Small, so cheap to include.
+retry "migration history dump" _db_dump --data-only --schema supabase_migrations -f "$BK/migration-history.sql" || { ERR="migration history dump failed after retries"; log "FATAL: $ERR"; false; }
 log "db dumps complete"
 
 # === Stage 3: Supabase Storage objects (customer documents) ===
@@ -255,6 +365,10 @@ for f in data.sql auth-data.sql; do
   grep -q "PostgreSQL database dump" "$BK/$f" || validate_fail "$f missing pg_dump header"
   tail -c 300 "$BK/$f" | grep -q "PostgreSQL database dump complete" || validate_fail "$f truncated (no completeness footer)"
 done
+# 5c-bis. migration history: present, complete, and it contains the tip read at the start
+[ -s "$BK/migration-history.sql" ] || validate_fail "migration-history.sql missing/empty"
+tail -c 300 "$BK/migration-history.sql" | grep -q "PostgreSQL database dump complete" || validate_fail "migration-history.sql truncated (no completeness footer)"
+if [ -n "$MIG_TIP" ]; then grep -q "$MIG_TIP" "$BK/migration-history.sql" || validate_fail "migration-history.sql does not contain the production tip $MIG_TIP"; fi
 # 5d. data.sql must set replica role (FK-safe load) and contain table data sections
 grep -q "session_replication_role = replica" "$BK/data.sql" || validate_fail "data.sql missing replica-role guard"
 grep -q "Type: TABLE DATA" "$BK/data.sql" || validate_fail "data.sql has no table data sections"
@@ -351,5 +465,14 @@ STATUS="success"
 FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 write_heartbeat "success" "$FINISHED_AT" || true
 rm -f "$BACKUP_ROOT/LAST_FAILURE.txt" 2>/dev/null || true  # clear any stale failure marker now that we have a verified success
+# Data minimisation: the plaintext dump directory (schema, data, AUTH data and Storage
+# objects in the clear) has done its job once the ENCRYPTED artefact has passed the
+# decrypt+checksum self-test AND been uploaded and size-verified off-site (both are hard
+# gates above — we only get here if they passed). Keeping plaintext production data on a
+# laptop is an avoidable exposure, so remove it. Set CF_BACKUP_KEEP_PLAINTEXT=1 to keep it
+# (e.g. for a supervised restore drill).
+if [ "${CF_BACKUP_KEEP_PLAINTEXT:-0}" != "1" ]; then
+  rm -rf "$BK" && log "plaintext dump directory removed (encrypted artefact verified + uploaded)"
+fi
 log "BACKUP SUCCESS (db+storage dumped, validated, encrypted, upload=$UPLOAD_STATUS, tip=$MIG_TIP)"
 exit 0

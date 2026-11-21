@@ -48,7 +48,7 @@ Heartbeat rows (`running` → `success`/`failed`) are written to `ops_backup_run
 
 ## Scheduling + manual run
 - Install (one-time): see the header of `scripts/ops/com.crewflow.backup.plist`.
-- Weekly: Sunday 03:17 local; a **missed** run (Mac asleep/off) fires once on next wake.
+- **Daily 03:17 local** (weekly/Sunday until 2026-11-13); a **missed** run (Mac asleep/off) fires once on next wake. Note: retention is still "last 8 artefacts", which on a daily schedule is about 8 days — see `docs/programme/backup/BACKUP-AUDIT.md` F-6.
 - **Run now (manual):** `bash scripts/ops/off-platform-backup.sh` (or `launchctl start com.crewflow.backup`).
 
 ## Mac-offline handling (no silent gap)
