@@ -1,0 +1,49 @@
+role,route,purpose,visited_in_chrome,forms_submitted,db_verified,console_net_errors,defect_id,status
+owner,/login,password sign-in,yes,yes,n/a,none,,PASSED IN CHROME
+owner,/dashboard,home overview,yes,no,n/a,hydration-mismatch (activity feed),D-2,FAILED IN CHROME -> FIXED AND RETESTED
+owner,/leads/new,create lead,yes,yes,yes (leads row + scoring),none,,PASSED IN CHROME
+owner,/leads/[id],lead detail,yes,no,yes,none,,PASSED IN CHROME
+owner,/customers/new,create business customer,yes,yes,yes (customers row),none,,PASSED IN CHROME
+owner,/quotes/new,create quote with mixed VAT,yes,yes,yes (quotes + line items; VAT correct),none,,PASSED IN CHROME
+owner,/quotes/[id],quote detail + approval lifecycle,yes,yes (request approval + approve),yes,none,,PASSED IN CHROME
+owner,/invoices/[id],invoice detail + record payment,yes,yes (partial payment),yes (invoice_payments; outstanding correct),none,,PASSED IN CHROME
+owner,/jobs,jobs list,yes,no,yes (auto-created job visible),none,,PASSED IN CHROME
+owner,/health-safety,RAMS dashboard,yes,no,n/a,none,,PASSED IN CHROME
+owner,/leads,leads list,yes,no,n/a,none,,PASSED IN CHROME (via nav)
+owner,/customers,customers list,yes,no,n/a,none,,PASSED IN CHROME (via nav)
+owner,/quotes,quotes list,yes,no,n/a,none,,PASSED IN CHROME (via nav)
+owner,/invoices,invoices list,yes,no,n/a,none,,PASSED IN CHROME (via nav)
+customer,/q/[token],portal quote view (draft guard),yes,no,n/a,none,,PASSED IN CHROME
+customer,/q/[token],portal quote accept + e-signature,yes,yes,yes (status accepted; invoice+job auto-created),none,,PASSED IN CHROME
+staff,/login,staff sign-in,yes,yes,n/a,none,,PASSED IN CHROME
+staff,/me,my day (own data only),yes,no,n/a,none,,PASSED IN CHROME
+staff,/invoices,denied (direct URL),yes,no,n/a,forbidden redirect (expected),,PASSED IN CHROME
+staff,/invoices/[id],denied (specific £21k invoice),yes,no,n/a,forbidden redirect (expected),,PASSED IN CHROME
+staff,/quotes,denied (direct URL),yes,no,n/a,forbidden redirect (expected),,PASSED IN CHROME
+staff,/reports,denied (direct URL),yes,no,n/a,forbidden redirect (expected),,PASSED IN CHROME
+staff,/finances,denied (redirect to /me),yes,no,n/a,expected,,PASSED IN CHROME
+staff,/jobs/[id] (unassigned),denied (404 not data),yes,no,yes (R5: no data exposed),none,,PASSED IN CHROME
+staff,/jobs (assigned),sees ONLY the assigned job after assignment (R5 positive),yes,no,yes (job_assignments scoping),none,,PASSED IN CHROME
+staff,/jobs/[id] (assigned),opens assigned job; Overview LEAKED commercial figures (contract/billed/outstanding + Get-paid),yes,no,yes,commercial strip shown to staff,D-8,FAILED IN CHROME -> FIXED AND RETESTED (#1036)
+staff,/staff,team roster (names/roles only),yes,no,n/a,none,,PASSED IN CHROME
+staff,/staff/[id],other member detail (pay/emergency stripped),yes,no,yes (seeded data not exposed),none,OBS-1,PASSED IN CHROME
+hq,/login,HQ superadmin sign-in,yes,yes,n/a,none,,PASSED IN CHROME
+hq,/admin,HQ home,yes,no,n/a,none,,PASSED IN CHROME
+hq,/admin/customers,Customers OS (51 orgs),yes,no,n/a,none,,PASSED IN CHROME
+hq,/admin/customers/[id],customer profile + operator actions,yes,no,n/a,trivial 404 asset,OBS-2,PASSED IN CHROME
+hq,/admin/ops,system status (presence-only env),yes,no,n/a,none,,PASSED IN CHROME
+owner,/operations,operations hub,yes,no,n/a,none,,PASSED IN CHROME
+owner,/assets/new,create asset (JCB 3CX),yes,yes,yes (assets row price/value/serial),none,,PASSED IN CHROME
+owner,/assets,assets list (shows created asset),yes,no,yes,none,,PASSED IN CHROME
+owner,/fleet,fleet hub,yes,no,n/a,none,,PASSED IN CHROME
+owner,/stock,stock hub,yes,no,n/a,none,,PASSED IN CHROME
+owner,/suppliers,suppliers list,yes,no,n/a,none,,PASSED IN CHROME
+owner,/suppliers/new,create supplier,yes,yes,yes (suppliers row terms/category),none,,PASSED IN CHROME
+owner,/cash,cash position (cross-module consistent),yes,no,yes (COLLECTABLE £11675 matches INV outstanding),none,,PASSED IN CHROME
+owner,/reports,reports hub (P&L/aged-debtors/cashflow/etc),yes,no,n/a,none,,PASSED IN CHROME
+owner,/expenses,expenses (AI receipt extract),yes,no,n/a,none,,PASSED IN CHROME
+owner,/settings,org/profile settings,yes,no,n/a,none,,PASSED IN CHROME
+owner,/tax,tax dashboard (VAT/corp tax),yes,no,yes (VAT £1464.82 ties to cash; corp tax 19%x18500=3515),none,,PASSED IN CHROME
+owner,"(remaining ~160 app routes: materials/requests, sites, purchase-orders, costs, cis, tax, insights, staff/rota, staff/leave, toolbox, diary, permits, snagging, works-quality, site-reports, drawings, documents, compliance, delays, blueprints, price-book, reviews, calendar, templates, imports, marketplace, help, onboarding, + nested detail/edit routes)",not yet browser-tested,,,,,"NOT TESTED"
+hq,"(remaining ~75 admin routes: sales/research/qualification/outreach AI consoles, AI boardroom, billing detail, demos/onboarding flows, governance/decisions, analytics, AI costs, support, impersonation, launch checklist, settings)",not yet browser-tested,,,,,"NOT TESTED"
+worker,"/a/[token], worker sign-off / acknowledgement portal",not browser-tested (covered by integration/security tiers),,,,,"NOT TESTED"
