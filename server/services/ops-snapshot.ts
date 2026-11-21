@@ -83,6 +83,102 @@ export type BackupHealth = {
   summary: string;
 };
 
+/**
+ * A single `ops_backup_runs` row as needed for health classification.
+ * Deliberately permissive: the DB read hands through unknown-shaped rows.
+ */
+export type BackupRunRow = {
+  status?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  migration_tip?: string | null;
+  upload_status?: string | null;
+};
+
+/**
+ * PURE backup-health classifier — the DR traffic-light rules, extracted from
+ * the DB read so they are unit-testable with no I/O.
+ *
+ * Rules (source of truth for the /admin/ops freshness tripwire):
+ *   - RED   if the most recent *completed* run failed, or there is no successful
+ *           backup on record, or the last validated success is >10d old.
+ *   - AMBER if the last validated success is >7d old (a scheduled run may have
+ *           been missed), or a run appears stuck ("running" >6h) while the last
+ *           success is still within 7d.
+ *   - GREEN if the last validated success is ≤7d old and nothing is stuck.
+ *
+ * Fails toward the caller: a newer "running" row must never hide an older
+ * failure, so `recentRuns` is scanned for the latest *terminal* status.
+ *
+ * @param recentRuns runs ordered started_at DESC (latest first).
+ * @param lastSuccess the latest successful run, or null/undefined if none.
+ * @param now epoch ms for age math (injectable for deterministic tests).
+ */
+export function classifyBackupHealth(
+  recentRuns: ReadonlyArray<BackupRunRow>,
+  lastSuccess: BackupRunRow | null | undefined,
+  now: number = Date.now(),
+): BackupHealth {
+  const lastRun = recentRuns[0];
+  // Most recent run that actually finished (success|failed). A newer "running"
+  // row must NOT hide an older failure, and a stuck "running" is itself a warning.
+  const lastTerminal = recentRuns.find(
+    (r) => r.status === "success" || r.status === "failed",
+  );
+  const lastRunStatus =
+    (lastRun?.status as BackupHealth["last_run_status"]) ?? null;
+  const lastRunAt = lastRun?.started_at ?? null;
+  const lastSuccessAt = lastSuccess?.finished_at ?? null;
+  const ageH =
+    lastSuccessAt != null
+      ? (now - new Date(lastSuccessAt).getTime()) / 3_600_000
+      : null;
+  const stuckRunning =
+    lastRun?.status === "running" &&
+    lastRun?.started_at != null &&
+    now - new Date(lastRun.started_at).getTime() > 6 * 3_600_000;
+
+  let status: BackupHealth["status"];
+  let summary: string;
+  if (lastTerminal?.status === "failed") {
+    status = "red";
+    summary =
+      "Most recent completed off-platform backup FAILED — investigate immediately.";
+  } else if (ageH == null) {
+    status = "red";
+    summary = "No successful off-platform backup on record.";
+  } else if (ageH > 10 * 24) {
+    status = "red";
+    summary = `Last validated backup ${Math.round(
+      ageH / 24,
+    )}d ago (>10d) — backup is STALE.`;
+  } else if (ageH > 7 * 24) {
+    status = "amber";
+    summary = `Last validated backup ${Math.round(
+      ageH / 24,
+    )}d ago (>7d) — a scheduled run may have been missed.`;
+  } else if (stuckRunning) {
+    status = "amber";
+    summary =
+      "A backup run appears stuck/incomplete (running >6h); last success still within 7d.";
+  } else {
+    status = "green";
+    summary = `Last validated backup ${Math.round(ageH)}h ago (upload: ${
+      lastSuccess?.upload_status ?? "n/a"
+    }).`;
+  }
+  return {
+    status,
+    last_success_at: lastSuccessAt,
+    last_success_age_hours: ageH == null ? null : Math.round(ageH),
+    last_run_status: lastRunStatus,
+    last_run_at: lastRunAt,
+    migration_tip: lastSuccess?.migration_tip ?? null,
+    upload_status: lastSuccess?.upload_status ?? null,
+    summary,
+  };
+}
+
 export type OpsSnapshot = {
   /** Overall traffic-light status. */
   status: "green" | "amber" | "red";
@@ -408,68 +504,11 @@ async function readBackupHealth(
         summary: "Backup status unavailable (ops_backup_runs read error).",
       };
     }
-    const runs = (last.data ?? []) as Array<Record<string, unknown>>;
-    const lastRun = runs[0];
-    // Most recent run that actually finished (success|failed). A newer "running"
-    // row must NOT hide an older failure, and a stuck "running" is itself a warning.
-    const lastTerminal = runs.find(
-      (r) => r.status === "success" || r.status === "failed",
-    );
-    const lastSuccess = succ.data?.[0];
-    const lastRunStatus =
-      (lastRun?.status as BackupHealth["last_run_status"]) ?? null;
-    const lastRunAt = (lastRun?.started_at as string | undefined) ?? null;
-    const lastSuccessAt =
-      (lastSuccess?.finished_at as string | undefined) ?? null;
-    const ageH =
-      lastSuccessAt != null
-        ? (Date.now() - new Date(lastSuccessAt).getTime()) / 3_600_000
-        : null;
-    const stuckRunning =
-      lastRun?.status === "running" &&
-      lastRun?.started_at != null &&
-      Date.now() - new Date(lastRun.started_at as string).getTime() >
-        6 * 3_600_000;
-
-    let status: BackupHealth["status"];
-    let summary: string;
-    if (lastTerminal?.status === "failed") {
-      status = "red";
-      summary =
-        "Most recent completed off-platform backup FAILED — investigate immediately.";
-    } else if (ageH == null) {
-      status = "red";
-      summary = "No successful off-platform backup on record.";
-    } else if (ageH > 10 * 24) {
-      status = "red";
-      summary = `Last validated backup ${Math.round(
-        ageH / 24,
-      )}d ago (>10d) — backup is STALE.`;
-    } else if (ageH > 7 * 24) {
-      status = "amber";
-      summary = `Last validated backup ${Math.round(
-        ageH / 24,
-      )}d ago (>7d) — a scheduled run may have been missed.`;
-    } else if (stuckRunning) {
-      status = "amber";
-      summary =
-        "A backup run appears stuck/incomplete (running >6h); last success still within 7d.";
-    } else {
-      status = "green";
-      summary = `Last validated backup ${Math.round(ageH)}h ago (upload: ${
-        (lastSuccess?.upload_status as string) ?? "n/a"
-      }).`;
-    }
-    return {
-      status,
-      last_success_at: lastSuccessAt,
-      last_success_age_hours: ageH == null ? null : Math.round(ageH),
-      last_run_status: lastRunStatus,
-      last_run_at: lastRunAt,
-      migration_tip: (lastSuccess?.migration_tip as string) ?? null,
-      upload_status: (lastSuccess?.upload_status as string) ?? null,
-      summary,
-    };
+    const runs = (last.data ?? []) as BackupRunRow[];
+    const lastSuccess = (succ.data?.[0] ?? null) as BackupRunRow | null;
+    // Classification is a PURE function (classifyBackupHealth) so the DR
+    // traffic-light rules are unit-tested with no I/O.
+    return classifyBackupHealth(runs, lastSuccess);
   } catch {
     return {
       ...base,
